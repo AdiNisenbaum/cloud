@@ -3,6 +3,8 @@ import queue
 from user_adi.Server import ServerProtocol, FileServer
 from DataBase import DataBase
 import threading
+import os
+import shutil
 
 
 class MainServer:
@@ -18,14 +20,13 @@ class MainServer:
         threading.Thread(target=self._send_loop).start()
 
     def handle_registration_msg(self, ip, data):
-
-        username, password, mail = data
         """
         Add username to db (after hash the pass) and put ans in send_q
-        :param username:
-        :param password:
-        :param mail:
+        :param ip:
+        :param data: a list of [username, password, mail]
         """
+        username, password, mail = data
+
         status = self.db.insert_user(username, password, mail)
         if status:
             ans = "0"
@@ -36,71 +37,130 @@ class MainServer:
         self.send_q.put((ip,ServerProtocol.pack_registration_msg(ans)))
 
     def handle_login_msg(self, ip, data):
-
+        """
+        checks if username exists in db and put ans in send_q
+        :param ip:
+        :param data:
+        """
         username, password = data
-
+        # TODO password = hashed password
         password_check = self.db.get_password(username)
+
         if password_check is None:
-            self.send_q.put((ip,ServerProtocol.pack_login_msg(False)))
-            # TODO password = hashed password
+            ans = "1"
         elif password_check == password:
+            ans = "0"
             self.users[ip] = username
             # TODO insert into self_q all files of user.
-            self.send_q.put((ip, ServerProtocol.pack_login_msg(True)))
-            #path = r"T:\public\Adi\פרוייקט 2022-23\cloud" + "\\" + username
-            #self.send_q.put()
-            pass
         else:
-            self.send_q.put((ip,ServerProtocol.pack_login_msg(False)))
+            ans = "1"
+        self.send_q.put((ip, ServerProtocol.pack_login_msg(ans)))
 
     def handle_disconnect_msg(self):
         pass
 
     def handle_update_password_msg(self, data):
         username, new_password = data
-        # TODO hash new password
-        if self.db.update_password(username, new_password):
+        # TODO new_password = hashed new_password
+        status = self.db.update_password(username, new_password)
+        if status:
+            ans = "0"
             # TODO insert into self_q all files of user.
-            pass
         else:
-            self.send_q.put(ServerProtocol.pack_update_password_msg(False))
+            ans = "1"
+        self.send_q.put(ServerProtocol.pack_update_password_msg(ans))
 
     def handle_upload_file_msg(self, ip, data):
         file_name, content_size = data
-        user = self.users[ip]
-        path = r"T:\public\Adi\פרוייקט 2022-23\cloud" + "\\" + user + "\\" + file_name
-        self.comm.rcv_file(ip, path, content_size)
+        try:
+            user = self.users[ip]
+            path = r"T:\public\Adi\פרוייקט 2022-23\cloud" + "\\" + user + "\\" + file_name
+            self.comm.rcv_file(ip, path, content_size)
+            ans = "0"
+        except Exception as Error:
+            ans = "1"
+            print("Error in MainServer - handle_upload_file_msg" + str(Error))
+        self.send_q.put((ip, ServerProtocol.pack_upload_file_msg(ans)))
 
-
-
-    def handle_download_file_msg(self, file_name):
-
+    def handle_download_file_msg(self, data):
+        file_name = data
         # call merry
         pass
 
-    def handle_delete_file_msg(self, username, file_name):
-        self.send_q.put(FileServer.delete_file(username, file_name))
+    def handle_delete_file_msg(self, ip, data):
+        username, file_name = data
+        status = FileServer.delete_file(username, file_name)
+        if status:
+            ans = "0"
+            self.users[ip] = username
+        else:
+            ans = "1"
+        self.send_q.put((ip, ServerProtocol.pack_delete_file_msg(ans)))
 
-    def handle_share_file_msg(self, username, friend, file_name):
-        self.send_q.put(FileServer.share_file(username, friend, file_name))
+    def handle_share_file_msg(self, ip, data):
+        username, friend, file_name = data
+        status = FileServer.share_file(username, friend, file_name)
+        if status:
+            ans = "0"
+        else:
+            ans = "1"
+        self.send_q.put((ip, ServerProtocol.pack_share_file_msg(ans)))
 
-    def handle_rename_file_msg(self, username, file_name, new_file_name):
-        self.send_q.put(FileServer.file_rename(username, file_name, new_file_name))
+    def handle_rename_file_msg(self, ip, data):
+        username, file_name, new_file_name = data
+        status = FileServer.file_rename(username, file_name, new_file_name)
+        if status:
+            ans = "0"
+            self.users[ip] = username
+        else:
+            ans = "1"
+        self.send_q.put((ip, ServerProtocol.pack_rename_msg(ans)))
 
-    def handle_copy_file_msg(self, username, file):
-        self.send_q.put(FileServer.copy_file(username, file))
+    def handle_copy_file_msg(self, ip, data):
+        username, file = data
+        status = FileServer.copy_file(username, file)
+        if status:
+            ans = "0"
+            self.users[ip] = username
+        else:
+            ans = "1"
+        self.send_q.put((ip, ServerProtocol.pack_copy_file_msg(ans)))
 
-    def handle_open_file_msg(self, file):
+    def handle_open_file_msg(self, data):
+        file = data
         pass
 
-    def handle_create_folder_msg(self, folder):
-        pass
+    def handle_create_folder_msg(self, ip, data):
+        folder = data
+        # user = self.users[ip]
+        try:
+            os.mkdir(folder)    # puts default mode --> os.mkdir(path, mode)
+            status = "0"
+        except FileExistsError:
+            print("Error in MainServer - handle_create_folder_msg - FileExistsError")
+            status = "1"
+        self.send_q.put(ip, ServerProtocol.pack_create_folder_msg(status))
 
-    def handle_transfer_folder_msg(self, folder):
-        pass
+    def handle_transfer_folder_msg(self, ip, data):
+        folder, to_folder = data
+        try:
+            folder_name = folder.split("\\")[-1]
+            folder.replace(folder_name, to_folder)
+            status = "0"
+        except Exception as Error:
+            print("Error in MainServer - handle_transfer_folder_msg" + str(Error))
+            status = "1"
+        self.send_q.put(ip, ServerProtocol.pack_transfer_folder_msg(status))
 
-    def handle_delete_folder_msg(self, folder):
-        pass
+    def handle_delete_folder_msg(self, ip, data):
+        folder = data
+        try:
+            shutil.rmtree(folder)
+            status = "0"
+        except Exception as Error:
+            print("Error in MainServer - handle_delete_folder_msg" + str(Error))
+            status = "1"
+        self.send_q.put(ip, ServerProtocol.pack_delete_folder_msg(status))
 
     def handle_download_folder_msg(self, folder):
         pass

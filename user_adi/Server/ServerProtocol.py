@@ -81,7 +81,7 @@ def pack_share_file_msg(data):
     return data
 
 
-def pack_change_name_msg(data):
+def pack_rename_msg(data):
     """
     pack a change name msg
     :param data: opcode and is a success
